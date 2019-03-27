@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.databinding.DataBindingUtil;
 import android.graphics.Point;
 import android.os.Build;
 import android.os.Bundle;
@@ -29,7 +30,7 @@ import android.widget.TextView;
 
 import com.eveningoutpost.dexdrip.G5Model.Extensions;
 import com.eveningoutpost.dexdrip.G5Model.Transmitter;
-import com.eveningoutpost.dexdrip.ImportedLibraries.dexcom.Constants;
+import com.eveningoutpost.dexdrip.ImportedLibraries.dexcom.Dex_Constants;
 import com.eveningoutpost.dexdrip.Models.ActiveBluetoothDevice;
 import com.eveningoutpost.dexdrip.Models.BgReading;
 import com.eveningoutpost.dexdrip.Models.Calibration;
@@ -39,9 +40,12 @@ import com.eveningoutpost.dexdrip.Models.TransmitterData;
 import com.eveningoutpost.dexdrip.Models.UserError;
 import com.eveningoutpost.dexdrip.Models.UserError.Log;
 import com.eveningoutpost.dexdrip.Services.DexCollectionService;
-import com.eveningoutpost.dexdrip.Services.DexShareCollectionService;
 import com.eveningoutpost.dexdrip.Services.G5CollectionService;
 import com.eveningoutpost.dexdrip.UtilityModels.CollectionServiceStarter;
+import com.eveningoutpost.dexdrip.UtilityModels.SensorStatus;
+import com.eveningoutpost.dexdrip.databinding.ActivitySystemStatusBinding;
+import com.eveningoutpost.dexdrip.ui.MicroStatus;
+import com.eveningoutpost.dexdrip.ui.MicroStatusImpl;
 import com.eveningoutpost.dexdrip.utils.DexCollectionType;
 import com.eveningoutpost.dexdrip.wearintegration.WatchUpdaterService;
 import com.google.android.gms.wearable.DataMap;
@@ -55,7 +59,7 @@ import java.util.Set;
 
 import static com.eveningoutpost.dexdrip.Home.startWatchUpdaterService;
 import static com.eveningoutpost.dexdrip.utils.DexCollectionType.DexcomG5;
-
+import static com.eveningoutpost.dexdrip.xdrip.gs;
 
 public class SystemStatusFragment extends Fragment {
     private static final int SMALL_SCREEN_WIDTH = 300;
@@ -78,9 +82,14 @@ public class SystemStatusFragment extends Fragment {
     private static final String TAG = "SystemStatus";
     private BroadcastReceiver serviceDataReceiver;
 
+    //@Inject
+    MicroStatus microStatus;
+
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
                              Bundle savedInstanceState) {
+        super.onCreateView(inflater, container, savedInstanceState);
+        //Injectors.getMicroStatusComponent().inject(this);
         requestWearCollectorStatus();
         serviceDataReceiver = new BroadcastReceiver() {
             @Override
@@ -116,7 +125,11 @@ public class SystemStatusFragment extends Fragment {
                 }
             }
         };
-        return inflater.inflate(R.layout.activity_system_status, container, false);
+        final ActivitySystemStatusBinding binding = DataBindingUtil.inflate(
+                inflater, R.layout.activity_system_status, container, false);
+        microStatus = new MicroStatusImpl();
+        binding.setMs(microStatus);
+        return binding.getRoot();
     }
 
     private void requestWearCollectorStatus() {
@@ -154,7 +167,7 @@ public class SystemStatusFragment extends Fragment {
 
     @Override
     public void onActivityCreated(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+        super.onActivityCreated(savedInstanceState);
         // setContentView(R.layout.activity_system_status);
         // JoH.fixActionBar(this);
         prefs = PreferenceManager.getDefaultSharedPreferences(xdrip.getAppContext());
@@ -213,7 +226,7 @@ public class SystemStatusFragment extends Fragment {
             mBluetoothManager = (BluetoothManager) safeGetContext().getSystemService(Context.BLUETOOTH_SERVICE);
         }
         setVersionName();
-        setCollectionMethod();
+        //setCollectionMethod();
         setCurrentDevice();
         if (Home.get_follower()) {
             setConnectionStatusFollower();
@@ -250,9 +263,9 @@ public class SystemStatusFragment extends Fragment {
         } else {
             transmitter_status_view.setText("" + td.sensor_battery_level);
             GcmActivity.requestSensorBatteryUpdate(); // always ask
-            if (td.sensor_battery_level <= Constants.TRANSMITTER_BATTERY_EMPTY) {
+            if (td.sensor_battery_level <= Dex_Constants.TRANSMITTER_BATTERY_EMPTY) {
                 transmitter_status_view.append(" - very low");
-            } else if (td.sensor_battery_level <= Constants.TRANSMITTER_BATTERY_LOW) {
+            } else if (td.sensor_battery_level <= Dex_Constants.TRANSMITTER_BATTERY_LOW) {
                 transmitter_status_view.append(" - low");
                 transmitter_status_view.append("\n(experimental interpretation)");
             } else {
@@ -264,22 +277,7 @@ public class SystemStatusFragment extends Fragment {
 
 
     private void setSensorStatus() {
-        StringBuilder sensor_status = new StringBuilder();
-        if (Sensor.isActive()) {
-            Sensor sens = Sensor.currentSensor();
-            Date date = new Date(sens.started_at);
-            DateFormat df = new SimpleDateFormat();
-            sensor_status.append(df.format(date));
-            sensor_status.append(" (");
-            sensor_status.append((System.currentTimeMillis() - sens.started_at) / (1000 * 60 * 60 * 24));
-            sensor_status.append("d ");
-            sensor_status.append(((System.currentTimeMillis() - sens.started_at) % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-            sensor_status.append("h)");
-        } else {
-            sensor_status.append("not available");
-        }
-        sensor_status_view.setText(sensor_status.toString());
-
+        sensor_status_view.setText(SensorStatus.status());
     }
 
 
@@ -337,7 +335,7 @@ public class SystemStatusFragment extends Fragment {
 
     private void setConnectionStatusFollower() {
         if (GcmListenerSvc.lastMessageReceived == 0) {
-            connection_status.setText("No data");
+            connection_status.setText(safeGetContext().getString(R.string.no_data));
         } else {
             connection_status.setText((JoH.qs((JoH.ts() - GcmListenerSvc.lastMessageReceived) / 60000, 0)) + " mins ago");
         }
@@ -347,7 +345,7 @@ public class SystemStatusFragment extends Fragment {
         if (ParakeetHelper.isParakeetCheckingIn()) {
             connection_status.setText(ParakeetHelper.parakeetStatusString());
         } else {
-            connection_status.setText("No data");
+            connection_status.setText(safeGetContext().getString(R.string.no_data));
         }
     }
 
@@ -367,9 +365,9 @@ public class SystemStatusFragment extends Fragment {
             }
         }
         if (connected) {
-            connection_status.setText("Connected");
+            connection_status.setText(safeGetContext().getString(R.string.connected));
         } else {
-            connection_status.setText("Not Connected");
+            connection_status.setText(safeGetContext().getString(R.string.not_connected));
         }
 
         String collection_method = prefs.getString("dex_collection_method", "BluetoothWixel");
@@ -395,7 +393,7 @@ public class SystemStatusFragment extends Fragment {
                     }
                 }
             } else {
-                connection_status.setText("No bluetooth");
+                connection_status.setText(safeGetContext().getString(R.string.no_bluetooth)); 
             }
         }
     }
@@ -454,7 +452,7 @@ public class SystemStatusFragment extends Fragment {
         restart_collection_service.setOnClickListener(new View.OnClickListener() {
             public void onClick(final View v) {
                 v.setEnabled(false);
-                JoH.static_toast_short("Restarting Collector!");
+                JoH.static_toast_short(gs(R.string.restarting_collector));
                 v.setAlpha(0.2f);
                 startWatchUpdaterService(safeGetContext(), WatchUpdaterService.ACTION_START_COLLECTOR, TAG);
                 CollectionServiceStarter.restartCollectionService(safeGetContext());

@@ -44,8 +44,10 @@ import com.ustwo.clockwise.common.WatchMode;
 import com.ustwo.clockwise.common.WatchShape;
 
 import java.text.DecimalFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.Locale;
 
 import lecho.lib.hellocharts.util.ChartUtils;
 import lecho.lib.hellocharts.view.LineChartView;
@@ -57,7 +59,7 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
     private final static String TAG = BIGChart.class.getSimpleName();
     public final static IntentFilter INTENT_FILTER;
     public static final long[] vibratePattern = {0,400,300,400,300,400};
-    public TextView mTime, mSgv, mTimestamp, mDelta;
+    public TextView mDate, mTime, mSgv, mTimestamp, mDelta;
     public RelativeLayout mRelativeLayout;
     //public LinearLayout mLinearLayout;
     public Button stepsButton;
@@ -99,6 +101,9 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
     private MessageReceiver messageReceiver;
 
     protected SharedPreferences sharedPrefs;
+    private static Locale oldLocale = null;
+    private static String oldDate = "";
+    private static SimpleDateFormat dateFormat = null;
     private String rawString = "000 | 000 | 000";
     private String batteryString = "--";
     private String sgvString = "--";
@@ -145,6 +150,7 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
             @Override
             public void onLayoutInflated(WatchViewStub stub) {
                 mTime = (TextView) stub.findViewById(R.id.watch_time);
+                mDate = (TextView) stub.findViewById(R.id.watch_date);
                 mSgv = (TextView) stub.findViewById(R.id.sgv);
                 mTimestamp = (TextView) stub.findViewById(R.id.timestamp);
                 mDelta = (TextView) stub.findViewById(R.id.delta);
@@ -190,14 +196,16 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
             }
             chartTapTime = eventTime;
         }
-        if (tapType == TAP_TYPE_TOUCH && linearLayout(mStepsLinearLayout, x, y)) {
-            if (sharedPrefs.getBoolean("showSteps", false) && mStepsCount > 0) {
-                JoH.static_toast_long(mStepsToast);
+        if (sharedPrefs.getBoolean("show_toasts", true)) {
+            if (tapType == TAP_TYPE_TOUCH && linearLayout(mStepsLinearLayout, x, y)) {
+                if (sharedPrefs.getBoolean("showSteps", false) && mStepsCount > 0) {
+                    JoH.static_toast_long(mStepsToast);
+                }
             }
-        }
-        if (tapType == TAP_TYPE_TOUCH && linearLayout(mDirectionDelta, x, y)) {
-            if (sharedPrefs.getBoolean("extra_status_line", false) && mExtraStatusLine != null && !mExtraStatusLine.isEmpty()) {
-                JoH.static_toast_long(mExtraStatusLine);
+            if (tapType == TAP_TYPE_TOUCH && linearLayout(mDirectionDelta, x, y)) {
+                if (sharedPrefs.getBoolean("extra_status_line", false) && mExtraStatusLine != null && !mExtraStatusLine.isEmpty()) {
+                    JoH.static_toast_long(mExtraStatusLine);
+                }
             }
         }
         if (tapType == TAP_TYPE_TOUCH && linearLayout(mMenuLinearLayout, x, y)) {
@@ -221,6 +229,7 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
         sharedPrefs.edit().putString("chart_timeframe", "" + timeframe).commit();
     }
 
+    @Override
     protected void onWatchModeChanged(WatchMode watchMode) {
 
         if(lowResMode ^ isLowRes(watchMode)){ //if there was a change in lowResMode
@@ -304,12 +313,53 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
         }
     }
 
+    private String getWatchDate() {
+        final Date now = new Date();
+        final String currentWatchDate = mDate.getText().toString();
+        final String newDate = new SimpleDateFormat("yyyyMMdd").format(now);
+        final Locale locale = BIGChart.this.getResources().getConfiguration().locale;
+        if (!oldDate.equals(newDate) || currentWatchDate.equals("ddd mm/dd") || (oldLocale != locale)) {
+            final SimpleDateFormat dayFormat = new SimpleDateFormat("EEE", locale);
+            if (d)
+                Log.d(TAG, "getWatchDate oldDate: " + oldDate + " now: " + now + " currentWatchDate: " + currentWatchDate);
+            if (dateFormat == null || oldLocale != locale)
+                dateFormat = getShortDateInstanceWithoutYear(locale);
+            String shortDate = dateFormat.format(now);
+            if (d)
+                Log.d(TAG, "getWatchDate shortDate " + locale.getDisplayName() + ": " + shortDate + " pattern: " + dateFormat.toPattern());
+
+            String day = dayFormat.format(now);
+            if (d)
+                Log.d(TAG, "getWatchDate day: " + day + " dayFormat: " + dayFormat.toPattern());
+            oldDate = newDate;
+            oldLocale = locale;
+            return day + "\n" + shortDate;
+        }
+        else
+            return currentWatchDate;
+    }
+
+    private SimpleDateFormat getShortDateInstanceWithoutYear(Locale locale) {
+        //final SimpleDateFormat sdf = (SimpleDateFormat) DateFormat.getDateFormat(BaseWatchFace.this);//defaults to localized SHORT
+        SimpleDateFormat sdf = (SimpleDateFormat) java.text.DateFormat.getDateInstance(java.text.DateFormat.SHORT, locale);
+        if (d) Log.d(TAG, "getShortDateInstanceWithoutYear pattern " + locale.getDisplayName() + ": " + sdf.toPattern());
+        sdf.applyPattern(sdf.toPattern().replaceAll("'[^']*", ""));//remove single quotes eg: Bulgarian: d.MM.yy 'г'
+        if (d) Log.d(TAG, "getShortDateInstanceWithoutYear pattern: " + sdf.toPattern());
+        sdf.applyPattern(sdf.toPattern().replaceAll("[^\\p{Alpha}]*y+[^\\p{Alpha}]*", ""));
+        if (d) Log.d(TAG, "getShortDateInstanceWithoutYear pattern: " + sdf.toPattern());
+        if (sdf instanceof SimpleDateFormat)
+            return sdf;
+        else
+            return new SimpleDateFormat("mm/yy", locale);
+    }
+
     @Override
     protected void onTimeChanged(WatchFaceTime oldTime, WatchFaceTime newTime) {
         if (newTime.hasHourChanged(oldTime) || newTime.hasMinuteChanged(oldTime)) {
             if (layoutSet) {
                 wakeLock.acquire(50);
-                final java.text.DateFormat timeFormat = DateFormat.getTimeFormat(BIGChart.this);
+                //final java.text.DateFormat timeFormat = DateFormat.getTimeFormat(BIGChart.this);
+                final SimpleDateFormat timeFormat = new SimpleDateFormat(sharedPrefs.getBoolean("use24HourFormat", false) ? "HH:mm" : "h:mm a");
                 mTime.setText(timeFormat.format(System.currentTimeMillis()));
                 showAgeAndStatus();
 
@@ -339,6 +389,18 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
             if (layoutSet && bundle != null && extra_status_line != null && !extra_status_line.isEmpty()) {
                 if (d) Log.d(TAG, "MessageReceiver extra_status_line=" + extra_status_line);
                 mExtraStatusLine = extra_status_line;
+            }
+            bundle = intent.getBundleExtra("locale");
+            if (layoutSet && bundle != null) {
+                dataMap = DataMap.fromBundle(bundle);
+                String localeStr = dataMap.getString("locale", "");
+                if (d) Log.d(TAG, "MessageReceiver locale=" + localeStr);
+                String locale[] = localeStr.split("_");
+                final Locale newLocale = locale == null ? new Locale(localeStr) : locale.length > 1 ? new Locale(locale[0], locale[1]) : new Locale(locale[0]);//eg"en", "en_AU"
+                final Locale curLocale = Locale.getDefault();
+                if (newLocale != null && !curLocale.equals(newLocale)) {
+                    Locale.setDefault(newLocale);
+                }
             }
             bundle = intent.getBundleExtra("msg");
             if (layoutSet && bundle != null) {
@@ -401,7 +463,8 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
                     mSgv.setPaintFlags(mSgv.getPaintFlags() & ~Paint.STRIKE_THRU_TEXT_FLAG);
                 }
 
-                final java.text.DateFormat timeFormat = DateFormat.getTimeFormat(BIGChart.this);
+                //final java.text.DateFormat timeFormat = DateFormat.getTimeFormat(BIGChart.this);
+                final SimpleDateFormat timeFormat = new SimpleDateFormat(sharedPrefs.getBoolean("use24HourFormat", false) ? "HH:mm" : "h:mm a");
                 mTime.setText(timeFormat.format(System.currentTimeMillis()));
 
                 String delta = dataMap.getString("delta");
@@ -455,7 +518,8 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
                 mRelativeLayout.measure(specW, specH);
                 mRelativeLayout.layout(0, 0, mRelativeLayout.getMeasuredWidth(),
                         mRelativeLayout.getMeasuredHeight());
-                //invalidate();//to conserve battery, use onTimeChanged() default of one minute
+                if (sharedPrefs.getBoolean("refresh_on_change", false))
+                    invalidate();//to conserve battery, use onTimeChanged() default of one minute instead
                 setColor();
             }
         }
@@ -504,6 +568,12 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
         if( mTimestamp != null){
             mTimestamp.setText(readingAge(true));
         }
+        if (sharedPrefs.getBoolean("showDate", true)) {
+            mDate.setVisibility(View.VISIBLE);
+            mDate.setText(getWatchDate());
+        } else {
+            mDate.setVisibility(View.GONE);
+        }
 
         boolean showStatus = sharedPrefs.getBoolean("showExternalStatus", true);
 
@@ -532,6 +602,8 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key){
         setColor();
         if(layoutSet){
+            final SimpleDateFormat timeFormat = new SimpleDateFormat(sharedPrefs.getBoolean("use24HourFormat", false) ? "HH:mm" : "h:mm a");
+            mTime.setText(timeFormat.format(System.currentTimeMillis()));
             clearTreatmentLists();
             showAgeAndStatus();
             mRelativeLayout.measure(specW, specH);
@@ -833,9 +905,9 @@ public class BIGChart extends WatchFace implements SharedPreferences.OnSharedPre
             int timeframe = Integer.parseInt(sharedPrefs.getString("chart_timeframe", "5"));
             boolean doMgdl = (sharedPrefs.getString("units", "mgdl").equals("mgdl"));
             if (lowResMode) {
-                bgGraphBuilder = new BgGraphBuilder(getApplicationContext(), bgDataList, treatsDataList, calDataList, btDataList, pointSize, midColor, timeframe, doMgdl);
+                bgGraphBuilder = new BgGraphBuilder(getApplicationContext(), bgDataList, treatsDataList, calDataList, btDataList, pointSize, midColor, timeframe, doMgdl, sharedPrefs.getBoolean("use24HourFormat", false));
             } else {
-                bgGraphBuilder = new BgGraphBuilder(getApplicationContext(), bgDataList, treatsDataList, calDataList, btDataList, pointSize, highColor, lowColor, midColor, timeframe, doMgdl);
+                bgGraphBuilder = new BgGraphBuilder(getApplicationContext(), bgDataList, treatsDataList, calDataList, btDataList, pointSize, highColor, lowColor, midColor, timeframe, doMgdl, sharedPrefs.getBoolean("use24HourFormat", false));
             }
 
             chart.setLineChartData(bgGraphBuilder.lineData());

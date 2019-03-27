@@ -26,27 +26,29 @@ public class LargeHome extends BaseWatchFace {
     @Override
     protected void onTapCommand(int tapType, int x, int y, long eventTime) {
 
-        if (tapType == TAP_TYPE_TAP&&
-                ((x >=mDirectionDelta.getLeft() &&
-                        x <= mDirectionDelta.getRight()&&
+        if (tapType == TAP_TYPE_TAP &&
+                ((x >= mDirectionDelta.getLeft() &&
+                        x <= mDirectionDelta.getRight() &&
                         y >= mDirectionDelta.getTop() &&
-                        y <= mDirectionDelta.getBottom()) )) {//||
+                        y <= mDirectionDelta.getBottom()))) {//||
             if (eventTime - fontsizeTapTime < 800) {
                 setSmallFontsize(true);
             }
             fontsizeTapTime = eventTime;
         }
-        if (tapType == TAP_TYPE_TOUCH && x >=mDirectionDelta.getLeft() && linearLayout(mLinearLayout, x, y)) {
-            JoH.static_toast_short(mStatusLine);
-        }
-        if (tapType == TAP_TYPE_TOUCH && linearLayout(mStepsLinearLayout, x, y)) {
-            if (sharedPrefs.getBoolean("showSteps", false) && mStepsCount > 0) {
-                JoH.static_toast_long(mStepsToast);
+        if (sharedPrefs.getBoolean("show_toasts", true)) {
+            if (tapType == TAP_TYPE_TOUCH && x >= mDirectionDelta.getLeft() && linearLayout(mLinearLayout, x, y)) {
+                JoH.static_toast_short(mStatusLine);
             }
-        }
-        if (tapType == TAP_TYPE_TOUCH && linearLayout(mDirectionDelta, x, y)) {
-            if (sharedPrefs.getBoolean("extra_status_line", false) && mExtraStatusLine != null && !mExtraStatusLine.isEmpty()) {
-                JoH.static_toast_long(mExtraStatusLine);
+            if (tapType == TAP_TYPE_TOUCH && linearLayout(mStepsLinearLayout, x, y)) {
+                if (sharedPrefs.getBoolean("showSteps", false) && mStepsCount > 0) {
+                    JoH.static_toast_long(mStepsToast);
+                }
+            }
+            if (tapType == TAP_TYPE_TOUCH && linearLayout(mDirectionDelta, x, y)) {
+                if (sharedPrefs.getBoolean("extra_status_line", false) && mExtraStatusLine != null && !mExtraStatusLine.isEmpty()) {
+                    JoH.static_toast_long(mExtraStatusLine);
+                }
             }
         }
         if (tapType == TAP_TYPE_TOUCH && linearLayout(mMenuLinearLayout, x, y)) {
@@ -78,6 +80,7 @@ public class LargeHome extends BaseWatchFace {
     protected void setColorDark(){
         mLinearLayout.setBackgroundColor(ContextCompat.getColor(getApplicationContext(), R.color.dark_mLinearLayout));
         mTime.setTextColor(ContextCompat.getColor(getApplicationContext(), R.color.dark_mTime));
+        mDate.setTextColor(ContextCompat.getColor(getApplicationContext(), R.color.dark_mTime));
         mRelativeLayout.setBackgroundColor(ContextCompat.getColor(getApplicationContext(), R.color.dark_background));
         if (sgvLevel == 1) {
             mSgv.setTextColor(ContextCompat.getColor(getApplicationContext(), R.color.dark_highColor));
@@ -150,6 +153,7 @@ public class LargeHome extends BaseWatchFace {
             }
             mStatus.setTextColor(Color.WHITE);
             mTime.setTextColor(Color.BLACK);
+            mDate.setTextColor(Color.BLACK);
         } else {
             mRelativeLayout.setBackgroundColor(Color.BLACK);
             mLinearLayout.setBackgroundColor(Color.LTGRAY);
@@ -171,6 +175,7 @@ public class LargeHome extends BaseWatchFace {
             mTimestamp.setTextColor(Color.BLACK);
             mStatus.setTextColor(Color.BLACK);
             mTime.setTextColor(Color.WHITE);
+            mDate.setTextColor(Color.WHITE);
         }
     }
 
@@ -178,6 +183,7 @@ public class LargeHome extends BaseWatchFace {
     protected void setColorLowRes() {
         mLinearLayout.setBackgroundColor(ContextCompat.getColor(getApplicationContext(), R.color.dark_mLinearLayout));
         mTime.setTextColor(ContextCompat.getColor(getApplicationContext(), R.color.dark_mTime));
+        mDate.setTextColor(ContextCompat.getColor(getApplicationContext(), R.color.dark_mTime));
         mRelativeLayout.setBackgroundColor(ContextCompat.getColor(getApplicationContext(), R.color.dark_background));
         mSgv.setTextColor(ContextCompat.getColor(getApplicationContext(), R.color.dark_midColor));
         mDelta.setTextColor(ContextCompat.getColor(getApplicationContext(), R.color.dark_midColor));

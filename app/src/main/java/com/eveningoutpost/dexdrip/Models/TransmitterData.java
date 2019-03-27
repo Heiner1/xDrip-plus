@@ -2,14 +2,16 @@ package com.eveningoutpost.dexdrip.Models;
 
 import android.provider.BaseColumns;
 
-import com.eveningoutpost.dexdrip.GcmActivity;
-import com.eveningoutpost.dexdrip.Home;
-import com.eveningoutpost.dexdrip.Models.UserError.Log;
-
 import com.activeandroid.Model;
 import com.activeandroid.annotation.Column;
 import com.activeandroid.annotation.Table;
 import com.activeandroid.query.Select;
+import com.eveningoutpost.dexdrip.GcmActivity;
+import com.eveningoutpost.dexdrip.Home;
+import com.eveningoutpost.dexdrip.ImportedLibraries.usbserial.util.HexDump;
+import com.eveningoutpost.dexdrip.Models.UserError.Log;
+import com.eveningoutpost.dexdrip.UtilityModels.Constants;
+import com.eveningoutpost.dexdrip.UtilityModels.Pref;
 import com.eveningoutpost.dexdrip.utils.CheckBridgeBattery;
 import com.eveningoutpost.dexdrip.utils.DexCollectionType;
 import com.google.gson.annotations.Expose;
@@ -17,6 +19,7 @@ import com.google.gson.annotations.Expose;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Date;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -31,6 +34,7 @@ public class TransmitterData extends Model {
     @Column(name = "timestamp", index = true)
     public long timestamp;
 
+    // TODO these should be int or long surely
     @Expose
     @Column(name = "raw_data")
     public double raw_data;
@@ -48,13 +52,15 @@ public class TransmitterData extends Model {
     public String uuid;
 
     public static synchronized TransmitterData create(byte[] buffer, int len, Long timestamp) {
-        if (len < 6) { return null; }
-        TransmitterData transmitterData = new TransmitterData();
+        if (len < 6) {
+            return null;
+        }
+        final TransmitterData transmitterData = new TransmitterData();
         try {
             if ((buffer[0] == 0x11 || buffer[0] == 0x15) && buffer[1] == 0x00) {
                 //this is a dexbridge packet.  Process accordingly.
                 Log.i(TAG, "create Processing a Dexbridge packet");
-                ByteBuffer txData = ByteBuffer.allocate(len);
+                final ByteBuffer txData = ByteBuffer.allocate(len);
                 txData.order(ByteOrder.LITTLE_ENDIAN);
                 txData.put(buffer, 0, len);
                 transmitterData.raw_data = txData.getInt(2);
@@ -80,9 +86,9 @@ public class TransmitterData extends Model {
                     transmitterData.sensor_battery_level = Integer.parseInt(data[1]);
                     if (data.length > 2) {
                         try {
-                            Home.setPreferencesInt("bridge_battery", Integer.parseInt(data[2]));
+                            Pref.setInt("bridge_battery", Integer.parseInt(data[2]));
                             if (Home.get_master()) {
-                                GcmActivity.sendBridgeBattery(Home.getPreferencesInt("bridge_battery", -1));
+                                GcmActivity.sendBridgeBattery(Pref.getInt("bridge_battery", -1));
                             }
                             CheckBridgeBattery.checkBridgeBattery();
                         } catch (Exception e) {
@@ -90,12 +96,12 @@ public class TransmitterData extends Model {
                         }
                         if (data.length > 3) {
                             if ((DexCollectionType.getDexCollectionType() == DexCollectionType.LimiTTer)
-                                    && (!Home.getPreferencesBooleanDefaultFalse("use_transmiter_pl_bluetooth"))) {
+                                    && (!Pref.getBooleanDefaultFalse("use_transmiter_pl_bluetooth"))) {
                                 try {
                                     // reported sensor age in minutes
                                     final Integer sensorAge = Integer.parseInt(data[3]);
                                     if ((sensorAge > 0) && (sensorAge < 200000))
-                                        Home.setPreferencesInt("nfc_sensor_age", sensorAge);
+                                        Pref.setInt("nfc_sensor_age", sensorAge);
                                 } catch (Exception e) {
                                     Log.e(TAG, "Got exception processing field 4 in classic limitter protocol: " + e);
                                 }
@@ -111,30 +117,32 @@ public class TransmitterData extends Model {
 
             //Stop allowing readings that are older than the last one - or duplicate data, its bad! (from savek-cc)
             final TransmitterData lastTransmitterData = TransmitterData.last();
-            if (lastTransmitterData != null && lastTransmitterData.timestamp >= timestamp) {
+            if (lastTransmitterData != null && lastTransmitterData.timestamp >= transmitterData.timestamp) {
+                Log.e(TAG, "Rejecting TransmitterData constraint: last: " + JoH.dateTimeText(lastTransmitterData.timestamp) + " >= this: " + JoH.dateTimeText(transmitterData.timestamp));
                 return null;
             }
-            if (lastTransmitterData != null && lastTransmitterData.raw_data == transmitterData.raw_data && Math.abs(lastTransmitterData.timestamp - timestamp) < (120000)) {
+            if (lastTransmitterData != null && lastTransmitterData.raw_data == transmitterData.raw_data && Math.abs(lastTransmitterData.timestamp - transmitterData.timestamp) < (Constants.MINUTE_IN_MS * 2)) {
+                Log.e(TAG, "Rejecting identical TransmitterData constraint: last: " + JoH.dateTimeText(lastTransmitterData.timestamp) + " due to 2 minute rule this: " + JoH.dateTimeText(transmitterData.timestamp));
                 return null;
             }
             final Calibration lastCalibration = Calibration.lastValid();
-            if (lastCalibration != null && lastCalibration.timestamp > timestamp) {
+            if (lastCalibration != null && lastCalibration.timestamp > transmitterData.timestamp) {
+                Log.e(TAG, "Rejecting historical TransmitterData constraint: calib: " + JoH.dateTimeText(lastCalibration.timestamp) + " > this: " + JoH.dateTimeText(transmitterData.timestamp));
                 return null;
             }
 
             transmitterData.uuid = UUID.randomUUID().toString();
             transmitterData.save();
             return transmitterData;
-        }catch(Exception e)
-        {
-            Log.e(TAG, "Got exception processing fields in protocol: " + e);
+        } catch (Exception e) {
+            Log.e(TAG, "Got exception processing fields in protocol: " + e + " " + HexDump.dumpHexString(buffer));
         }
         return null;
     }
 
     public static synchronized TransmitterData create(int raw_data, int filtered_data, int sensor_battery_level, long timestamp) {
         TransmitterData lastTransmitterData = TransmitterData.last();
-        if (lastTransmitterData != null && lastTransmitterData.raw_data == raw_data && Math.abs(lastTransmitterData.timestamp - new Date().getTime()) < (120000)) { //Stop allowing duplicate data, its bad!
+        if (lastTransmitterData != null && lastTransmitterData.raw_data == raw_data && Math.abs(lastTransmitterData.timestamp - new Date().getTime()) < (Constants.MINUTE_IN_MS * 2)) { //Stop allowing duplicate data, its bad!
             return null;
         }
 
@@ -150,7 +158,7 @@ public class TransmitterData extends Model {
 
     public static synchronized TransmitterData create(int raw_data ,int sensor_battery_level, long timestamp) {
         TransmitterData lastTransmitterData = TransmitterData.last();
-        if (lastTransmitterData != null && lastTransmitterData.raw_data == raw_data && Math.abs(lastTransmitterData.timestamp - new Date().getTime()) < (120000)) { //Stop allowing duplicate data, its bad!
+        if (lastTransmitterData != null && lastTransmitterData.raw_data == raw_data && Math.abs(lastTransmitterData.timestamp - new Date().getTime()) < (Constants.MINUTE_IN_MS * 2)) { //Stop allowing duplicate data, its bad!
             return null;
         }
 
@@ -167,6 +175,21 @@ public class TransmitterData extends Model {
         return new Select()
                 .from(TransmitterData.class)
                 .orderBy("_ID desc")
+                .executeSingle();
+    }
+
+    public static List<TransmitterData> last(int count) {
+        return new Select()
+                .from(TransmitterData.class)
+                .orderBy("_ID desc")
+                .limit(count)
+                .execute();
+    }
+
+    public static TransmitterData lastByTimestamp() {
+        return new Select()
+                .from(TransmitterData.class)
+                .orderBy("timestamp desc")
                 .executeSingle();
     }
 
@@ -203,6 +226,13 @@ public class TransmitterData extends Model {
             return null;
         }
     }
+    
+    public static TransmitterData byid(long id) {
+        return new Select()
+                .from(TransmitterData.class)
+                .where("_ID = ?", id)
+                .executeSingle();
+    }
 
     public static void updateTransmitterBatteryFromSync(final int battery_level) {
         try {
@@ -224,6 +254,24 @@ public class TransmitterData extends Model {
         } catch (Exception e) {
             Log.e(TAG,"Got exception updating sensor battery from sync: "+e.toString());
         }
+    }
+
+    private static double roundRaw(TransmitterData td) {
+        return JoH.roundDouble(td.raw_data,3);
+    }
+    private static double roundFiltered(TransmitterData td) {
+        return JoH.roundDouble(td.filtered_data,3);
+    }
+
+    public static boolean unchangedRaw() {
+        final List<TransmitterData> items = last(3);
+        if (items != null && items.size() == 3) {
+            return (roundRaw(items.get(0)) == roundRaw(items.get(1))
+                    && roundRaw(items.get(0)) == roundRaw(items.get(2))
+                    && roundFiltered(items.get(0)) == roundFiltered(items.get(1))
+                    && roundFiltered(items.get(0)) == roundFiltered(items.get(2)));
+        }
+        return false;
     }
 
 }

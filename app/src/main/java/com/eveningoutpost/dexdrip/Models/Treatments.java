@@ -18,7 +18,7 @@ import com.eveningoutpost.dexdrip.Home;
 import com.eveningoutpost.dexdrip.Models.UserError.Log;
 import com.eveningoutpost.dexdrip.R;
 import com.eveningoutpost.dexdrip.Services.SyncService;
-import com.eveningoutpost.dexdrip.UtilityModels.NightscoutUploader;
+import com.eveningoutpost.dexdrip.UtilityModels.Pref;
 import com.eveningoutpost.dexdrip.UtilityModels.UndoRedo;
 import com.eveningoutpost.dexdrip.UtilityModels.UploaderQueue;
 import com.eveningoutpost.dexdrip.xdrip;
@@ -45,9 +45,11 @@ import java.util.UUID;
 
 @Table(name = "Treatments", id = BaseColumns._ID)
 public class Treatments extends Model {
-    private final static String TAG = "jamorham " + Treatments.class.getSimpleName();
+    private static final String TAG = "jamorham " + Treatments.class.getSimpleName();
+    private static final String DEFAULT_EVENT_TYPE = "<none>";
     public final static String XDRIP_TAG = "xdrip";
-    public static double activityMultipler = 8.4; // somewhere between 8.2 and 8.8
+
+    //public static double activityMultipler = 8.4; // somewhere between 8.2 and 8.8
     private static Treatments lastCarbs;
     private static boolean patched = false;
 
@@ -114,7 +116,7 @@ public class Treatments extends Model {
             Treatment.enteredBy = XDRIP_TAG;
         }
 
-        Treatment.eventType = "<none>";
+        Treatment.eventType = DEFAULT_EVENT_TYPE;
         Treatment.carbs = carbs;
         Treatment.insulin = insulin;
         Treatment.timestamp = timestamp;
@@ -160,7 +162,7 @@ public class Treatments extends Model {
             Log.d(TAG, "Creating new treatment entry for note");
             is_new = true;
 
-            treatment.eventType = "<none>";
+            treatment.eventType = DEFAULT_EVENT_TYPE;
             treatment.carbs = 0;
             treatment.insulin = 0;
             treatment.notes = note;
@@ -207,6 +209,7 @@ public class Treatments extends Model {
         Treatment.enteredBy = XDRIP_TAG;
         Treatment.eventType = "Sensor Start";
         Treatment.created_at = DateUtil.toISOString(timestamp);
+        Treatment.timestamp = timestamp;
         Treatment.uuid = UUID.randomUUID().toString();
         Treatment.save();
         pushTreatmentSync(Treatment);
@@ -220,7 +223,7 @@ public class Treatments extends Model {
     private static void pushTreatmentSync(Treatments treatment, boolean is_new, String suggested_uuid) {;
         if (Home.get_master_or_follower()) GcmActivity.pushTreatmentAsync(treatment);
 
-        if (!(Home.getPreferencesBoolean("cloud_storage_api_enable", false) || Home.getPreferencesBoolean("cloud_storage_mongodb_enable", false))) {
+        if (!(Pref.getBoolean("cloud_storage_api_enable", false) || Pref.getBoolean("cloud_storage_mongodb_enable", false))) {
             NSClientChat.pushTreatmentAsync(treatment);
         } else {
             Log.d(TAG, "Skipping NSClient treatment broadcast as nightscout direct sync is enabled");
@@ -236,7 +239,7 @@ public class Treatments extends Model {
 
     public static void pushTreatmentSyncToWatch(Treatments treatment, boolean is_new) {
         Log.d(TAG, "pushTreatmentSyncToWatch Add treatment to UploaderQueue.");
-        if (Home.getPreferencesBooleanDefaultFalse("wear_sync")) {
+        if (Pref.getBooleanDefaultFalse("wear_sync")) {
             if (UploaderQueue.newEntryForWatch(is_new ? "insert" : "update", treatment) != null) {
                 SyncService.startSyncService(3000); // sync in 3 seconds
             }
@@ -402,8 +405,19 @@ public class Treatments extends Model {
 
     public static synchronized boolean pushTreatmentFromJson(String json, boolean from_interactive) {
         Log.d(TAG, "converting treatment from json: " + json);
-        Treatments mytreatment = fromJSON(json);
+        final Treatments mytreatment = fromJSON(json);
         if (mytreatment != null) {
+            if ((mytreatment.carbs == 0) && (mytreatment.insulin == 0)
+                    && (mytreatment.notes != null) && (mytreatment.notes.startsWith("AndroidAPS started"))) {
+                Log.d(TAG, "Skipping AndroidAPS started message");
+                return false;
+            }
+            if ((mytreatment.eventType != null) && (mytreatment.eventType.equals("Temp Basal"))) {
+                // we don't yet parse or process these
+                Log.d(TAG, "Skipping Temp Basal msg");
+                return false;
+            }
+
             if (mytreatment.uuid == null) {
                 try {
                     final JSONObject jsonobj = new JSONObject(json);
@@ -413,12 +427,26 @@ public class Treatments extends Model {
                 }
                 if (mytreatment.uuid == null) mytreatment.uuid = UUID.randomUUID().toString();
             }
-            Treatments dupe_treatment = byTimestamp(mytreatment.timestamp);
+            // anything received +- 1500 ms is going to be treated as a duplicate
+            final Treatments dupe_treatment = byTimestamp(mytreatment.timestamp);
             if (dupe_treatment != null) {
                 Log.i(TAG, "Duplicate treatment for: " + mytreatment.timestamp);
 
+                if ((dupe_treatment.insulin == 0) && (mytreatment.insulin > 0)) {
+                    dupe_treatment.insulin = mytreatment.insulin;
+                    dupe_treatment.save();
+                    Home.staticRefreshBGChartsOnIdle();
+                }
+
+                if ((dupe_treatment.carbs == 0) && (mytreatment.carbs > 0)) {
+                    dupe_treatment.carbs = mytreatment.carbs;
+                    dupe_treatment.save();
+                    Home.staticRefreshBGChartsOnIdle();
+                }
+
                 if ((dupe_treatment.uuid !=null) && (mytreatment.uuid !=null) && (dupe_treatment.uuid.equals(mytreatment.uuid)) && (mytreatment.notes != null))
                 {
+
                     if ((dupe_treatment.notes == null) || (dupe_treatment.notes.length() < mytreatment.notes.length()))
                     {
                         dupe_treatment.notes = mytreatment.notes;
@@ -427,7 +455,7 @@ public class Treatments extends Model {
                         Log.d(TAG,"Saved updated treatement notes");
                         // should not end up needing to append notes and be from_interactive via undo as these
                         // would be mutually exclusive operations so we don't need to handle that here.
-                        Home.staticRefreshBGCharts();
+                        Home.staticRefreshBGChartsOnIdle();
                     }
                 }
 
@@ -438,7 +466,7 @@ public class Treatments extends Model {
                 mytreatment.enteredBy = "sync";
             }
             if ((mytreatment.eventType == null) || (mytreatment.eventType.equals(""))) {
-                mytreatment.eventType = "<none>"; // should have a default
+                mytreatment.eventType = DEFAULT_EVENT_TYPE; // should have a default
             }
             if ((mytreatment.created_at == null) || (mytreatment.created_at.equals(""))) {
                 try {
@@ -454,7 +482,7 @@ public class Treatments extends Model {
             if (from_interactive) {
                 pushTreatmentSync(mytreatment);
             }
-            Home.staticRefreshBGCharts();
+            Home.staticRefreshBGChartsOnIdle();
             return true;
         } else {
             return false;
@@ -472,6 +500,16 @@ public class Treatments extends Model {
         return new Select()
                 .from(Treatments.class)
                 .where("timestamp >= ? and timestamp <= ?", df.format(startTime), df.format(endTime))
+                .orderBy("timestamp asc")
+                .limit(number)
+                .execute();
+    }
+
+    public static List<Treatments> latestForGraph(final int number, final long startTime, final long endTime) {
+        fixUpTable();
+        return new Select()
+                .from(Treatments.class)
+                .where("timestamp >= ? and timestamp <= ?", startTime, endTime)
                 .orderBy("timestamp asc")
                 .limit(number)
                 .execute();
@@ -749,7 +787,7 @@ public class Treatments extends Model {
     }
 
 
-    /// OLD ONE BELOW
+   /* /// OLD ONE BELOW
 
     public static List<Iob> ioBForGraph_old(int number, double startTime) {
 
@@ -906,6 +944,14 @@ public class Treatments extends Model {
         Log.d(TAG, "Finished Processing iobforgraph: main - processed:  " + Integer.toString(counter) + " Timeslot records");
         JoH.benchmark_method_end();
         return responses;
+    }*/
+
+    public String getBestShortText() {
+        if (!eventType.equals(DEFAULT_EVENT_TYPE)) {
+            return eventType;
+        } else {
+            return "Treatment";
+        }
     }
 
     public String toJSON() {
@@ -923,6 +969,36 @@ public class Treatments extends Model {
             e.printStackTrace();
             return "";
         }
+    }
+
+    private static final double MAX_SMB_UNITS = 0.3;
+    private static final double MAX_OPENAPS_SMB_UNITS = 0.4;
+    public boolean likelySMB() {
+        return (carbs == 0 && insulin > 0
+                && ((insulin <= MAX_SMB_UNITS && (notes == null || notes.length() == 0)) || (enteredBy != null && enteredBy.startsWith("openaps:") && insulin <= MAX_OPENAPS_SMB_UNITS)));
+    }
+
+    public boolean noteOnly() {
+        return carbs == 0 && insulin == 0 && noteHasContent();
+    }
+
+    public boolean hasContent() {
+        return insulin != 0 || carbs != 0 || noteHasContent() || !isEventTypeDefault();
+    }
+
+    public boolean noteHasContent() {
+        return notes != null && notes.length() > 0;
+    }
+
+    public boolean isEventTypeDefault() {
+        return eventType == null || eventType.equalsIgnoreCase(DEFAULT_EVENT_TYPE);
+    }
+
+    public static boolean matchUUID(final List<Treatments> treatments, final String uuid) {
+        for (final Treatments treatment : treatments) {
+            if (treatment.uuid.equalsIgnoreCase(uuid)) return true;
+        }
+        return false;
     }
 
     public String toS() {

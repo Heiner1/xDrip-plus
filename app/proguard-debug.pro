@@ -1,0 +1,48 @@
+-include proguard-rules.pro
+-keepattributes SourceFile,LineNumberTable
+
+-keep class com.google.android.apps.common.testing.** { *; }
+-keep class android.app.Instrumentation.** { *; }
+-keep class android.content.** { *; }
+-keep class org.easymock.** { *; }
+-keep class java.beans.** { *; }
+-keep class libcore.io.** { *; }
+
+-keep class org.xmlpull.v1.** {*; }
+-dontwarn org.xmlpull.v1.**
+
+-dontwarn org.hamcrest.**
+-dontwarn android.test.**
+-dontwarn android.support.test.**
+
+-keep class org.hamcrest.** { *; }
+
+-keep class org.junit.** { *; }
+-dontwarn org.junit.**
+
+-keep class junit.** { *; }
+-dontwarn junit.**
+
+-dontwarn com.google.devtools.build.android.desugar.runtime.**
+
+-keep class sun.misc.** { *; }
+-dontwarn sun.misc.**
+-dontnote **rx.Observable.**
+-dontnote **
+
+-keepclassmembers class com.eveningoutpost.dexdrip.** {
+   public static boolean isRunning();
+   public static boolean isCollecting();
+   public static ** nanoStatus();
+}
+
+-dontnote rx.internal.util.PlatformDependent
+-dontnote rx.**
+-dontnote **rx.Observable.**
+-dontnote com.squareup.**
+
+-dontwarn java.lang.invoke.*
+-dontwarn **$$Lambda$*
+
+-dontwarn com.google.devtools.build
+-dontwarn com.google.devtools.build.android.desugar.runtime.**

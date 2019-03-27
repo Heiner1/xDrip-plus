@@ -17,8 +17,13 @@ import com.eveningoutpost.dexdrip.Models.BgReading;
 import com.eveningoutpost.dexdrip.Models.BloodTest;
 import com.eveningoutpost.dexdrip.Models.Calibration;
 import com.eveningoutpost.dexdrip.Models.JoH;
+import com.eveningoutpost.dexdrip.Models.LibreBlock;
+import com.eveningoutpost.dexdrip.Models.TransmitterData;
 import com.eveningoutpost.dexdrip.Models.Treatments;
 import com.eveningoutpost.dexdrip.Models.UserError;
+import com.eveningoutpost.dexdrip.tidepool.TidepoolEntry;
+import com.eveningoutpost.dexdrip.tidepool.TidepoolStatus;
+import com.eveningoutpost.dexdrip.tidepool.TidepoolUploader;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.annotations.Expose;
@@ -146,10 +151,60 @@ public class UploaderQueue extends Model {
         UserError.Log.d(TAG, "new entry called");
         final UploaderQueue result = new UploaderQueue();
         result.bitfield_wanted = DEFAULT_UPLOAD_CIRCUITS
-                | (Home.getPreferencesBooleanDefaultFalse("cloud_storage_mongodb_enable") ? MONGO_DIRECT : 0)
-                | (Home.getPreferencesBooleanDefaultFalse("cloud_storage_api_enable") ? NIGHTSCOUT_RESTAPI : 0)
-                | (Home.getPreferencesBooleanDefaultFalse("cloud_storage_influxdb_enable") ? INFLUXDB_RESTAPI : 0)
-                | (Home.getPreferencesBooleanDefaultFalse("wear_sync") ? WATCH_WEARAPI : 0);
+                | (Pref.getBooleanDefaultFalse("cloud_storage_mongodb_enable") ? MONGO_DIRECT : 0)
+                | (Pref.getBooleanDefaultFalse("cloud_storage_api_enable") ? NIGHTSCOUT_RESTAPI : 0)
+                | (Pref.getBooleanDefaultFalse("cloud_storage_influxdb_enable") ? INFLUXDB_RESTAPI : 0)
+                | (Pref.getBooleanDefaultFalse("wear_sync") ? WATCH_WEARAPI : 0);
+        if (result.bitfield_wanted == 0) return null; // no queue required
+        result.timestamp = JoH.tsl();
+        result.reference_id = obj.getId();
+        // TODO this probably could be neater
+        if (result.reference_uuid == null)
+            result.reference_uuid = obj instanceof BgReading ? ((BgReading) obj).uuid : null;
+        if (result.reference_uuid == null)
+            result.reference_uuid = obj instanceof Treatments ? ((Treatments) obj).uuid : null;
+        if (result.reference_uuid == null)
+            result.reference_uuid = obj instanceof Calibration ? ((Calibration) obj).uuid : null;
+        if (result.reference_uuid == null)
+            result.reference_uuid = obj instanceof BloodTest ? ((BloodTest) obj).uuid : null;
+        if (result.reference_uuid == null)
+            result.reference_uuid = obj instanceof TransmitterData ? ((TransmitterData) obj).uuid : null;
+        if (result.reference_uuid == null)
+            result.reference_uuid = obj instanceof LibreBlock ? ((LibreBlock) obj).uuid : null;
+
+        if (result.reference_uuid == null) {
+            Log.d(TAG, "reference_uuid was null so refusing to create new entry");
+            return null;
+        }
+
+        if (result.reference_id < 0) {
+            UserError.Log.wtf(TAG, "ERROR ref id was: " + result.reference_id + " for uuid: " + result.reference_uuid + " refusing to create");
+            return null;
+        }
+
+        result.action = action;
+
+        result.bitfield_complete = 0;
+        result.type = obj.getClass().getSimpleName();
+        result.saveit();
+        if (d) UserError.Log.d(TAG, result.toS());
+        last_new_entry = JoH.tsl();
+        return result;
+    }
+
+    public static void newTransmitterDataEntry(String action, Model obj) {
+    	if(!Pref.getBooleanDefaultFalse("mongo_load_transmitter_data")) {
+    		return;
+    	}
+    	newEntry(action, obj);
+    }
+    
+    // TODO remove duplicated functionality, replace with generic multi-purpose method
+    public static UploaderQueue newEntryForWatch(String action, Model obj) {
+        UserError.Log.d(TAG, "new entry called for watch");
+        final UploaderQueue result = new UploaderQueue();
+        result.bitfield_wanted = DEFAULT_UPLOAD_CIRCUITS
+                | (Pref.getBooleanDefaultFalse("wear_sync") ? WATCH_WEARAPI : 0);
         if (result.bitfield_wanted == 0) return null; // no queue required
         result.timestamp = JoH.tsl();
         result.reference_id = obj.getId();
@@ -168,36 +223,8 @@ public class UploaderQueue extends Model {
             return null;
         }
 
-        result.action = action;
-
-        result.bitfield_complete = 0;
-        result.type = obj.getClass().getSimpleName();
-        result.saveit();
-        if (d) UserError.Log.d(TAG, result.toS());
-        last_new_entry = JoH.tsl();
-        return result;
-    }
-
-    public static UploaderQueue newEntryForWatch(String action, Model obj) {
-        UserError.Log.d(TAG, "new entry called for watch");
-        final UploaderQueue result = new UploaderQueue();
-        result.bitfield_wanted = DEFAULT_UPLOAD_CIRCUITS
-                | (Home.getPreferencesBooleanDefaultFalse("wear_sync") ? WATCH_WEARAPI : 0);
-        if (result.bitfield_wanted == 0) return null; // no queue required
-        result.timestamp = JoH.tsl();
-        result.reference_id = obj.getId();
-        // TODO this probably could be neater
-        if (result.reference_uuid == null)
-            result.reference_uuid = obj instanceof BgReading ? ((BgReading) obj).uuid : null;
-        if (result.reference_uuid == null)
-            result.reference_uuid = obj instanceof Treatments ? ((Treatments) obj).uuid : null;
-        if (result.reference_uuid == null)
-            result.reference_uuid = obj instanceof Calibration ? ((Calibration) obj).uuid : null;
-        if (result.reference_uuid == null)
-            result.reference_uuid = obj instanceof BloodTest ? ((BloodTest) obj).uuid : null;
-
-        if (result.reference_uuid == null) {
-            Log.d(TAG, "reference_uuid was null so refusing to create new entry");
+        if (result.reference_id < 0) {
+            UserError.Log.wtf(TAG, "Watch ERROR ref id was: " + result.reference_id + " for uuid: " + result.reference_uuid + " refusing to create");
             return null;
         }
 
@@ -378,7 +405,7 @@ public class UploaderQueue extends Model {
                 int count_total = count_pending + count_completed;
 
                 if (count_total > 0) {
-                    l.add(new StatusItem(circuits_for_stats.valueAt(i).toString(), count_pending + " " + type));
+                    l.add(new StatusItem(circuits_for_stats.valueAt(i).toString(), count_pending + " " + type, (count_pending > 1000) ? StatusItem.Highlight.BAD : StatusItem.Highlight.NORMAL));
                 }
             }
 
@@ -397,9 +424,15 @@ public class UploaderQueue extends Model {
                 }*/
         }
 
-        if (MongoSendTask.exception != null) {
-            l.add(new StatusItem("Exception", MongoSendTask.exception.toString(), StatusItem.Highlight.BAD));
-
+        if (UploaderTask.exception != null) {
+            l.add(new StatusItem("Exception", UploaderTask.exception.toString(), StatusItem.Highlight.BAD, "long-press",
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            JoH.static_toast_long("Cleared error message");
+                            UploaderTask.exception = null;
+                        }
+                    }));
         }
 
 
@@ -411,20 +444,27 @@ public class UploaderQueue extends Model {
                             if (JoH.ratelimit("nightscout-manual-poll", 15)) {
                                 startSyncService(100);
                                 JoH.static_toast_short("Polling");
+                                if (TidepoolEntry.enabled()) {
+                                    TidepoolUploader.doLogin(true);
+                                }
                             }
                         }
                     }));
 
 
         // enumerate status items for nightscout rest-api
-        if (Home.getPreferencesBooleanDefaultFalse("cloud_storage_api_enable")) {
+        if (Pref.getBooleanDefaultFalse("cloud_storage_api_enable")) {
             try {
+
+                /*if (NightscoutUploader.last_success_time > 0) {
+                    l.add(new StatusItem("REST Success", JoH.niceTimeSince(NightscoutUploader.last_success_time) + " ago", StatusItem.Highlight.NORMAL));
+                }*/
 
                 if ((processedBaseURIs == null) || (JoH.ratelimit("uploader-base-urls-cache", 60))) {
                     // Rebuild url cache
                     processedBaseURIs = new ArrayList<>();
                     processedBaseURInames = new ArrayList<>();
-                    final String baseURLSettings = Home.getPreferencesStringDefaultBlank("cloud_storage_api_base");
+                    final String baseURLSettings = Pref.getStringDefaultBlank("cloud_storage_api_base");
                     final ArrayList<String> baseURIs = new ArrayList<>();
 
                     for (String baseURLSetting : baseURLSettings.split(" ")) {
@@ -445,7 +485,7 @@ public class UploaderQueue extends Model {
                     try {
                         final String store_marker = "nightscout-status-poll-" + processedBaseURIs.get(i);
                         final JSONObject status = new JSONObject(PersistentStore.getString(store_marker));
-                        l.add(new StatusItem(processedBaseURInames.get(i), status.getString("name") + " " + status.getString("version"), StatusItem.Highlight.NORMAL, "long-press",
+                        l.add(new StatusItem(processedBaseURInames.get(i), status.getString("name") + " " + status.getString("version"), status.getString("version").startsWith("0.8") ? StatusItem.Highlight.CRITICAL : StatusItem.Highlight.NORMAL, "long-press",
                                 new Runnable() {
                                     @Override
                                     public void run() {
@@ -489,8 +529,14 @@ public class UploaderQueue extends Model {
         ///
 
         if (NightscoutUploader.last_exception_time > 0) {
-            l.add(new StatusItem("REST-API problem\n" + JoH.dateTimeText(NightscoutUploader.last_exception_time), NightscoutUploader.last_exception, JoH.msSince(NightscoutUploader.last_exception_time) < (Constants.MINUTE_IN_MS * 6) ? StatusItem.Highlight.BAD : StatusItem.Highlight.NORMAL));
+            l.add(new StatusItem("REST-API problem\n" + JoH.dateTimeText(NightscoutUploader.last_exception_time) + " (" + NightscoutUploader.last_exception_count + ")", NightscoutUploader.last_exception, JoH.msSince(NightscoutUploader.last_exception_time) < (Constants.MINUTE_IN_MS * 6) ? StatusItem.Highlight.BAD : StatusItem.Highlight.NORMAL));
         }
+
+
+        if (TidepoolEntry.enabled()) {
+            l.addAll(TidepoolStatus.megaStatus());
+        }
+
 
         if (last_cleanup > 0)
             l.add(new StatusItem("Last clean up", JoH.niceTimeSince(last_cleanup) + " ago"));

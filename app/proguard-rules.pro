@@ -45,6 +45,7 @@
 -dontwarn okhttp3.**
 -dontwarn org.influxdb.**
 
+-keep class com.eveningoutpost.dexdrip.tidepool.** { *; }
 -keep class com.nightscout.** { *; }
 -keep class com.squareup.** { *; }
 -keep class net.tribe7.** { *; }
@@ -59,3 +60,65 @@
 -keep class com.eveningoutpost.dexdrip.ImportedLibraries.usbserial.** { *; }
 -keep class ar.com.hjg.pngj.** { *; }
 -keep class android.support.v7.widget.SearchView { *; }
+
+
+-dontwarn java.util.concurrent.**
+
+-keep class rx.schedulers.Schedulers {
+    public static <methods>;
+}
+-keep class rx.schedulers.ImmediateScheduler {
+    public <methods>;
+}
+-keep class rx.schedulers.TestScheduler {
+    public <methods>;
+}
+-keep class rx.schedulers.Schedulers {
+    public static ** test();
+}
+
+-keep public class * implements **.BitmapCacheProvider
+
+-keepclassmembers class rx.internal.util.unsafe.*ArrayQueue*Field* {
+    long producerIndex;
+    long consumerIndex;
+}
+-keepclassmembers class rx.internal.util.unsafe.BaseLinkedQueueProducerNodeRef {
+    long producerNode;
+    long consumerNode;
+}
+
+-keepclassmembers class rx.internal.util.unsafe.** {
+    long producerIndex;
+    long consumerIndex;
+}
+
+-keepclassmembers class rx.internal.util.unsafe.BaseLinkedQueueProducerNodeRef {
+    rx.internal.util.atomic.LinkedQueueNode producerNode;
+}
+
+-keepclassmembers class rx.internal.util.unsafe.BaseLinkedQueueConsumerNodeRef {
+    rx.internal.util.atomic.LinkedQueueNode consumerNode;
+}
+
+-keepclassmembers class com.eveningoutpost.dexdrip.** {
+   public static boolean isRunning();
+   public static boolean isCollecting();
+   public static ** nanoStatus();
+}
+
+-keep @com.google.gson.annotations.Expose public class *
+
+-keepclassmembers public class * {
+    @com.google.gson.annotations.Expose *;
+}
+
+-dontnote rx.internal.util.PlatformDependent
+-dontnote rx.**
+-dontnote **rx.Observable.**
+-dontnote com.squareup.**
+
+-dontwarn java.lang.invoke.*
+-dontwarn **$$Lambda$*
+
+-dontwarn com.google.devtools.build.android.desugar.runtime.**

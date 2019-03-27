@@ -1,7 +1,7 @@
 package com.eveningoutpost.dexdrip;
 
 //KS import android.app.NotificationManager;
-import android.app.Activity;
+
 import android.app.ActivityManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -17,12 +17,9 @@ import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.preference.PreferenceManager;
-//KS import android.support.v4.app.NotificationCompat;
 import android.support.v4.content.LocalBroadcastManager;
 import android.support.wearable.view.WatchViewStub;
 import android.text.TextUtils;
-import android.text.format.DateFormat;
-import android.util.Log;
 import android.view.Display;
 import android.view.View;
 import android.view.WindowInsets;
@@ -33,17 +30,22 @@ import android.widget.RelativeLayout;
 import android.widget.TextView;
 
 import com.eveningoutpost.dexdrip.Models.JoH;
+import com.eveningoutpost.dexdrip.Models.UserError.Log;
+import com.eveningoutpost.dexdrip.Services.HeartRateService;
 import com.eveningoutpost.dexdrip.UtilityModels.BgSendQueue;
+import com.eveningoutpost.dexdrip.UtilityModels.Pref;
 import com.eveningoutpost.dexdrip.utils.DexCollectionType;
 import com.google.android.gms.wearable.DataMap;
-import com.ustwo.clockwise.common.WatchMode;
-import com.ustwo.clockwise.wearable.WatchFace;
 import com.ustwo.clockwise.common.WatchFaceTime;
+import com.ustwo.clockwise.common.WatchMode;
 import com.ustwo.clockwise.common.WatchShape;
+import com.ustwo.clockwise.wearable.WatchFace;
 
 import java.text.DecimalFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.Locale;
 
 import lecho.lib.hellocharts.view.LineChartView;
 
@@ -54,18 +56,22 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
     private final static String TAG = BaseWatchFace.class.getSimpleName();
     public final static IntentFilter INTENT_FILTER;
     public static final long[] vibratePattern = {0,400,300,400,300,400};
-    public TextView mTime, mSgv, mDirection, mTimestamp, mUploaderBattery, mUploaderXBattery, mDelta, mRaw, mStatus;
+    public TextView mDate, mTime, mSgv, mDirection, mTimestamp, mUploaderBattery, mUploaderXBattery, mDelta, mRaw, mStatus;
     public Button stepsButton;
+    public Button heartButton;
     public Button menuButton;
     public RelativeLayout mRelativeLayout;
     public LinearLayout mLinearLayout;
     public LinearLayout mDirectionDelta;
     public LinearLayout mStepsLinearLayout;
     public LinearLayout mMenuLinearLayout;
+    public LinearLayout mSecondaryLayout;
     public String mExtraStatusLine = "";
     public String mStepsToast = "";
     public int mStepsCount = 0;
+    public int mHeartBPM = 0;
     public long mTimeStepsRcvd = 0;
+    public long mTimeHeartRcvd = 0;
     public long sgvLevel = 0;
     public int batteryLevel = 1;
     public int mXBatteryLevel = 1;
@@ -87,7 +93,7 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
     public ArrayList<BgWatchData> treatsDataList = new ArrayList<>();
     public ArrayList<BgWatchData> calDataList = new ArrayList<>();
     public ArrayList<BgWatchData> btDataList = new ArrayList<>();
-    private final static boolean d = true; // debug flag, could be read from preferences
+    private final static boolean d = false; // debug flag, could be read from preferences
     public PowerManager.WakeLock wakeLock;
     // related to manual layout
     public View layoutView;
@@ -99,6 +105,9 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
     private MessageReceiver messageReceiver;
 
     protected SharedPreferences sharedPrefs;
+    private static Locale oldLocale = null;
+    private static String oldDate = "";
+    private static SimpleDateFormat dateFormat = null;
     private String rawString = "000 | 000 | 000";
     private String batteryString = "--";
     private String sgvString = "--";
@@ -146,6 +155,7 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
             @Override
             public void onLayoutInflated(WatchViewStub stub) {
                 mTime = (TextView) stub.findViewById(R.id.watch_time);
+                mDate = (TextView) stub.findViewById(R.id.watch_date);
                 mSgv = (TextView) stub.findViewById(R.id.sgv);
                 mDirection = (TextView) stub.findViewById(R.id.direction);
                 mTimestamp = (TextView) stub.findViewById(R.id.timestamp);
@@ -155,6 +165,11 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
                 mUploaderXBattery = (TextView) stub.findViewById(R.id.uploader_xbattery);
                 mDelta = (TextView) stub.findViewById(R.id.delta);
                 stepsButton=(Button)stub.findViewById(R.id.walkButton);
+                try {
+                    heartButton=(Button)stub.findViewById(R.id.heartButton);
+                } catch (Exception e) {
+                    //
+                }
                 mStepsLinearLayout = (LinearLayout) stub.findViewById(R.id.steps_layout);
                 menuButton=(Button)stub.findViewById(R.id.menuButton);
                 mMenuLinearLayout = (LinearLayout) stub.findViewById(R.id.menu_layout);
@@ -177,6 +192,8 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
                 mRelativeLayout.measure(specW, specH);
                 mRelativeLayout.layout(0, 0, mRelativeLayout.getMeasuredWidth(),
                         mRelativeLayout.getMeasuredHeight());
+                showSteps();
+                showHeartRate();
             }
         });
         Log.d(TAG, "performViewSetup requestData");
@@ -280,12 +297,52 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
         }
     }
 
+    private String getWatchDate() {
+        final Date now = new Date();
+        final String currentWatchDate = mDate.getText().toString();
+        final String newDate = new SimpleDateFormat("yyyyMMdd").format(now);
+        final Locale locale = BaseWatchFace.this.getResources().getConfiguration().locale;
+        if (!oldDate.equals(newDate) || currentWatchDate.equals("ddd mm/dd") || (oldLocale != locale)) {
+            final SimpleDateFormat dayFormat = new SimpleDateFormat("EEE", locale);
+            if (d)
+                Log.d(TAG, "getWatchDate oldDate: " + oldDate + " now: " + now + " currentWatchDate: " + currentWatchDate);
+            if (dateFormat == null || oldLocale != locale)
+                dateFormat = getShortDateInstanceWithoutYear(locale);
+            String shortDate = dateFormat.format(now);
+            if (d)
+                Log.d(TAG, "getWatchDate shortDate " + locale.getDisplayName() + ": " + shortDate + " pattern: " + dateFormat.toPattern());
+
+            String day = dayFormat.format(now);
+            if (d)
+                Log.d(TAG, "getWatchDate day: " + day + " dayFormat: " + dayFormat.toPattern());
+            oldDate = newDate;
+            oldLocale = locale;
+            return day + "\n" + shortDate;
+        }
+        else
+            return currentWatchDate;
+    }
+
+    private SimpleDateFormat getShortDateInstanceWithoutYear(Locale locale) {
+        SimpleDateFormat sdf = (SimpleDateFormat) java.text.DateFormat.getDateInstance(java.text.DateFormat.SHORT, locale);
+        if (d) Log.d(TAG, "getShortDateInstanceWithoutYear pattern " + locale.getDisplayName() + ": " + sdf.toPattern());
+        sdf.applyPattern(sdf.toPattern().replaceAll("'[^']*", ""));//remove single quotes eg: Bulgarian: d.MM.yy 'г'
+        if (d) Log.d(TAG, "getShortDateInstanceWithoutYear pattern: " + sdf.toPattern());
+        sdf.applyPattern(sdf.toPattern().replaceAll("[^\\p{Alpha}]*y+[^\\p{Alpha}]*", ""));
+        if (d) Log.d(TAG, "getShortDateInstanceWithoutYear pattern: " + sdf.toPattern());
+        if (sdf instanceof SimpleDateFormat)
+            return sdf;
+        else
+            return new SimpleDateFormat("mm/yy", locale);
+    }
+
     @Override
     protected void onTimeChanged(WatchFaceTime oldTime, WatchFaceTime newTime) {
         if (newTime.hasHourChanged(oldTime) || newTime.hasMinuteChanged(oldTime)) {
             if (layoutSet) {
                 wakeLock.acquire(50);
-                final java.text.DateFormat timeFormat = DateFormat.getTimeFormat(BaseWatchFace.this);
+                //final java.text.DateFormat timeFormat = DateFormat.getTimeFormat(BaseWatchFace.this);
+                final SimpleDateFormat timeFormat = new SimpleDateFormat(sharedPrefs.getBoolean("use24HourFormat", false) ? "HH:mm" : "h:mm a");
                 mTime.setText(timeFormat.format(System.currentTimeMillis()));
                 showAgoRawBattStatus();
 
@@ -315,6 +372,18 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
                 if (d) Log.d(TAG, "MessageReceiver extra_status_line=" + extra_status_line);
                 mExtraStatusLine = extra_status_line;
             }
+            bundle = intent.getBundleExtra("locale");
+            if (layoutSet && bundle != null) {
+                dataMap = DataMap.fromBundle(bundle);
+                String localeStr = dataMap.getString("locale", "");
+                if (d) Log.d(TAG, "MessageReceiver locale=" + localeStr);
+                String locale[] = localeStr.split("_");
+                final Locale newLocale = locale == null ? new Locale(localeStr) : locale.length > 1 ? new Locale(locale[0], locale[1]) : new Locale(locale[0]);//eg"en", "en_AU"
+                final Locale curLocale = Locale.getDefault();
+                if (newLocale != null && !curLocale.equals(newLocale)) {
+                    Locale.setDefault(newLocale);
+                }
+            }
             bundle = intent.getBundleExtra("msg");
             if (layoutSet && bundle != null) {
                 dataMap = DataMap.fromBundle(bundle);
@@ -329,6 +398,12 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
                     mStepsCount = dataMap.getInt("steps", 0);
                     mTimeStepsRcvd = dataMap.getLong("steps_timestamp", 0);
                     showSteps();
+                }
+
+                if (mTimeHeartRcvd < dataMap.getLong("heart_rate_timestamp", 0)) {
+                    mHeartBPM = dataMap.getInt("heart_rate", 0);
+                    mTimeHeartRcvd = dataMap.getLong("heart_rate_timestamp", 0);
+                    showHeartRate();
                 }
             }
             bundle = intent.getBundleExtra(Home.HOME_FULL_WAKEUP);
@@ -389,7 +464,8 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
                     mSgv.setPaintFlags(mSgv.getPaintFlags() & ~Paint.STRIKE_THRU_TEXT_FLAG);
                 }
 
-                final java.text.DateFormat timeFormat = DateFormat.getTimeFormat(BaseWatchFace.this);
+                //final java.text.DateFormat timeFormat = DateFormat.getTimeFormat(BaseWatchFace.this);
+                final SimpleDateFormat timeFormat = new SimpleDateFormat(sharedPrefs.getBoolean("use24HourFormat", false) ? "HH:mm" : "h:mm a");
                 mTime.setText(timeFormat.format(System.currentTimeMillis()));
 
                 mDirection.setText(dataMap.getString("slopeArrow"));
@@ -422,6 +498,7 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
                 dataMap = DataMap.fromBundle(bundle);
                 wakeLock.acquire(50);
                 externalStatusString = dataMap.getString("externalStatusString");
+                if (d) Log.d(TAG, "MessageReceiver externalStatusString=" + externalStatusString);
 
                 showAgoRawBattStatus();
 
@@ -435,7 +512,8 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
                 mRelativeLayout.measure(specW, specH);
                 mRelativeLayout.layout(0, 0, mRelativeLayout.getMeasuredWidth(),
                         mRelativeLayout.getMeasuredHeight());
-                //invalidate();//to conserve battery, use onTimeChanged() default of one minute instead
+                if (sharedPrefs.getBoolean("refresh_on_change", false))
+                    invalidate();//to conserve battery, use onTimeChanged() default of one minute instead
                 setColor();
             }
         }
@@ -479,11 +557,28 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
         }
     }
 
+    private void showHeartRate() {
+        if ((mHeartBPM > 0) && (JoH.msSince(mTimeHeartRcvd) <= HeartRateService.READING_PERIOD * 2)
+                && (sharedPrefs.getBoolean("showHeartRate", false) && (heartButton != null))) {
+            heartButton.setVisibility(View.VISIBLE);
+            heartButton.setText(String.format("%d", mHeartBPM));
+        } else {
+            if (heartButton != null) heartButton.setVisibility(View.GONE);
+        }
+    }
+
     private void showAgoRawBattStatus() {
 
         String uploaderXBatteryText = "";
         String uploaderBatteryText = "";
         String timestampText = "";
+
+        if (sharedPrefs.getBoolean("showDate", true)) {
+            mDate.setVisibility(View.VISIBLE);
+            mDate.setText(getWatchDate());
+        } else {
+            mDate.setVisibility(View.GONE);
+        }
 
         mDelta.setText(delta);
 
@@ -555,9 +650,9 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
             }
         }
         if (isCollectorRunning) {//Wear Collector
-            Log.d(TAG, DexCollectionType.getDexCollectionType() + " is running.");
             int wearBattery = getWearBatteryLevel(getApplication());
             String wearBatteryString = "" + wearBattery;
+            Log.d(TAG, DexCollectionType.getDexCollectionType() + " is running. batteryString=" + batteryString + " wearBatteryString=" + wearBatteryString);
             batteryLevel = (wearBattery >= 30) ? 1 : 0;
             uploaderBatteryText = getResources().getString(R.string.label_show_uploader_wear, wearBatteryString);
             if (showStatus || mShowXBattery)
@@ -566,7 +661,7 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
                 mUploaderBattery.setText(uploaderBatteryText);//"Wear: " + batteryString + "%"
         }
         else {//Phone Collector
-            Log.d(TAG, "Collector running on phone");
+            Log.d(TAG, "Collector running on phone batteryString=" + batteryString);
             uploaderBatteryText = getResources().getString(R.string.label_show_uploader, batteryString);
             if (showStatus || mShowXBattery)
                 mUploaderBattery.setText(getResources().getString(R.string.label_show_uploader_abbrv, batteryString));//"U: " + batteryString + "%"
@@ -621,8 +716,10 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
 
     }
 
-    protected void onWatchModeChanged(WatchMode watchMode) {
 
+    @Override
+    protected void onWatchModeChanged(WatchMode watchMode) {
+        Log.d(TAG,"OnWatchModeChanged: "+watchMode);
         if(lowResMode ^ isLowRes(watchMode)){ //if there was a change in lowResMode
             lowResMode = isLowRes(watchMode);
             setColor();
@@ -633,7 +730,9 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
     }
 
     private boolean isLowRes(WatchMode watchMode) {
-        return (watchMode == WatchMode.LOW_BIT) || (watchMode == WatchMode.LOW_BIT_BURN_IN) || (watchMode == WatchMode.LOW_BIT_BURN_IN);
+        return (watchMode == WatchMode.LOW_BIT)
+                || (watchMode == WatchMode.LOW_BIT_BURN_IN)
+                || (watchMode == WatchMode.BURN_IN && Pref.getBoolean("use_low_bit_mode", true));
     }
 
 
@@ -641,6 +740,8 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key){
         setColor();
         if(layoutSet){
+            final SimpleDateFormat timeFormat = new SimpleDateFormat(sharedPrefs.getBoolean("use24HourFormat", false) ? "HH:mm" : "h:mm a");
+            mTime.setText(timeFormat.format(System.currentTimeMillis()));
             clearTreatmentLists();
             showAgoRawBattStatus();
             setSmallFontsize(false);
@@ -823,9 +924,9 @@ public  abstract class BaseWatchFace extends WatchFace implements SharedPreferen
             int timeframe = Integer.parseInt(sharedPrefs.getString("chart_timeframe", "5"));
             boolean doMgdl = (sharedPrefs.getString("units", "mgdl").equals("mgdl"));
             if (lowResMode) {
-                bgGraphBuilder = new BgGraphBuilder(getApplicationContext(), bgDataList, treatsDataList, calDataList, btDataList, pointSize, midColor, timeframe, doMgdl);
+                bgGraphBuilder = new BgGraphBuilder(getApplicationContext(), bgDataList, treatsDataList, calDataList, btDataList, pointSize, midColor, timeframe, doMgdl, sharedPrefs.getBoolean("use24HourFormat", false));
             } else {
-                bgGraphBuilder = new BgGraphBuilder(getApplicationContext(), bgDataList, treatsDataList, calDataList, btDataList, pointSize, highColor, lowColor, midColor, timeframe, doMgdl);
+                bgGraphBuilder = new BgGraphBuilder(getApplicationContext(), bgDataList, treatsDataList, calDataList, btDataList, pointSize, highColor, lowColor, midColor, timeframe, doMgdl, sharedPrefs.getBoolean("use24HourFormat", false));
             }
 
             chart.setLineChartData(bgGraphBuilder.lineData());
